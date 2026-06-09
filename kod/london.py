@@ -1,8 +1,19 @@
 """
 ====================================================================
-   VALORANT VCT - PREDIKCIJA MASTERS LONDON 2026 
+   VALORANT VCT - PREDIKCIJA MASTERS LONDON 2026 (OPTIMIZOVANO)
 ====================================================================
 
+Glavne izmjene u odnosu na prvu verziju:
+  1. RECENCY WEIGHTING - noviji mecevi imaju vecu tezinu (2026 >> 2021)
+  2. STAGE 1 2026 PODACI - championship_points kao feature
+  3. MASTERS SANTIAGO 2026 - dodati u trening (najsvjeziji Masters)
+  4. MAP-SPECIFIC WIN RATE - kao feature u modelu (ne samo za prikaz)
+  5. FIX ECO BUG - prave kategorije ($, $$, $$$, Eco, Pistol)
+  6. PISTOL WIN RATE - jak prediktor
+  7. STANDARDNO SKALIRANJE - StandardScaler u pipeline-u
+  8. GRADIENT BOOSTING - novi, jaci algoritam
+  9. REALAN MONTE CARLO - bez "biranja protivnika", standardno seedovanje
+ 10. FIX DATA LEAKAGE - CV samo na trening setu
 """
 
 import os
@@ -31,8 +42,8 @@ warnings.filterwarnings("ignore")
 PATH = r"C:\Users\KORISNIK\Desktop\6. semestar\Softverski algoritmi u sistemima automatskog upravljanja\Projekat\dataset"
 GODINE = ["vct_2021", "vct_2022", "vct_2023", "vct_2024", "vct_2025", "vct_2026"]
 PATH_REZULTATI = r"C:\Users\KORISNIK\Desktop\6. semestar\Softverski algoritmi u sistemima automatskog upravljanja\Projekat\rezultati"
-
 # RECENCY WEIGHTING - skoriji mecevi vise vrijede pri treniranju
+# Manje agresivno nego prije - cuvamo informaciju o istorijski jakim timovima
 RECENCY_WEIGHTS = {
     "vct_2021": 0.30,
     "vct_2022": 0.50,
@@ -144,6 +155,7 @@ df_stage1_mecevi = pd.concat(stage1_mecevi, ignore_index=True) if stage1_mecevi 
 print(f"  stage1 mecevi: {len(df_stage1_mecevi)} meceva")
 
 # KANONIZACIJA IMENA - KRITICNO! 
+# Inace NRG izgleda kao slab tim jer su "Mega Minors" mecevi razdvojeni
 print("\n  Kanonizujem aliase timova...")
 for df_x in [df_pro, df_eco, df_overview, df_players, df_maps_scores, df_teams_agents]:
     kanonizuj_imena(df_x)
@@ -153,6 +165,7 @@ if not df_stage1_mecevi.empty:
     df_stage1_mecevi["team_b"] = df_stage1_mecevi["team_b"].replace(ALIAS_MAPPING)
     df_stage1_mecevi["winner"] = df_stage1_mecevi["winner"].replace(ALIAS_MAPPING)
 
+# Verifikacija - koliko sada NRG ima meceva u tier1?
 provj = df_pro[((df_pro["Team A"]=="NRG") | (df_pro["Team B"]=="NRG")) & 
                (df_pro["Tournament"].str.contains("Champions 2025|Santiago 2026|Toronto 2025", na=False))]
 print(f"  Provjera: NRG mecevi na tier1 (Champions 2025/Santiago 2026/Toronto 2025): {len(provj)}")
@@ -256,7 +269,7 @@ team_map_wr["ukupno_mapa"] = team_map_wr["map_uk_a"] + team_map_wr["map_uk_b"]
 team_map_wr["map_wr"] = team_map_wr["ukupne_pobjede_mapa"] / team_map_wr["ukupno_mapa"].replace(0, np.nan)
 team_map_wr = team_map_wr[["Team", "map_wr", "ukupno_mapa"]]
 
-# --- 2.5 STAGE 1 2026 - CHAMPIONSHIP POINTS  ---
+# --- 2.5 STAGE 1 2026 - CHAMPIONSHIP POINTS (NOVI KLJUCNI FEATURE!) ---
 stage1_features = df_stage1[["team", "championship_points", "placement", "region"]].copy()
 stage1_features.columns = ["Team", "championship_points", "stage1_placement", "region"]
 # Skaliraj placement: 1. mjesto = 1.0, 12. mjesto = 0.0
@@ -526,6 +539,62 @@ y_test = test[target].values
 print(f"Train: {len(X_train)}, Test: {len(X_test)}")
 
 # ====================================================================
+#  3.5 ENKODIRANJE I KORELACIONA ANALIZA
+# ====================================================================
+
+print("\n" + "=" * 60)
+print("  ENKODIRANJE I KORELACIONA ANALIZA")
+print("=" * 60)
+
+# ENKODIRANJE:
+# Kategoricki atributi (Tournament, Stage, Match Type, godina) NISU
+# direktno korisceni kao feature-i. Umjesto toga, iz njih su IZVEDENI
+# numericki feature-i:
+#   - "godina" -> recency_weight (0.30 - 1.50)
+#   - "Tournament" -> tier1_wr, recent_int_wr (da li je medjunarodni turnir)
+#   - "Team A"/"Team B" -> svi team-level feature-i (ELO, dynamic_wr, itd.)
+#
+# Ovim pristupom izbjegavamo probleme one-hot encodinga na 100+ timova
+# i 20+ turnira (sto bi stvorilo rijedak, visokodimenzionalan dataset).
+
+# KORELACIONA ANALIZA
+# Provjeravamo da li su featuri medjusobno jako korelisani (multikolinearnost).
+# Ako dva featura nose istu informaciju, model moze biti nestabilan.
+
+df_corr = pd.DataFrame(X_train, columns=features)
+corr_matrix = df_corr.corr()
+
+# Heatmapa korelacija
+plt.figure(figsize=(16, 12))
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+sns.heatmap(corr_matrix, mask=mask, annot=True, fmt=".2f", cmap="RdBu_r",
+            center=0, vmin=-1, vmax=1, linewidths=0.5,
+            square=True, cbar_kws={"shrink": 0.8})
+plt.title("Korelaciona matrica atributa", fontsize=14, fontweight="bold", pad=15)
+plt.xticks(rotation=45, ha="right", fontsize=8)
+plt.yticks(fontsize=8)
+plt.tight_layout()
+plt.savefig(os.path.join(PATH_REZULTATI, "korelaciona_matrica.png"), dpi=120)
+plt.close()
+
+# Prikazi parove sa jakom korelacijom (|r| > 0.7)
+print("\nParovi atributa sa jakom korelacijom (|r| > 0.7):")
+jaki_parovi = []
+for i in range(len(corr_matrix.columns)):
+    for j in range(i+1, len(corr_matrix.columns)):
+        r = corr_matrix.iloc[i, j]
+        if abs(r) > 0.7:
+            jaki_parovi.append((corr_matrix.columns[i], corr_matrix.columns[j], r))
+            print(f"  {corr_matrix.columns[i]:25s} <-> {corr_matrix.columns[j]:25s}  r={r:.3f}")
+
+if not jaki_parovi:
+    print("  Nema parova sa |r| > 0.7 — nema problema sa multikolinearniscu.")
+else:
+    print(f"\n  Ukupno {len(jaki_parovi)} jako korelisanih parova.")
+    print("  NAPOMENA: Ovo moze uticati na Logisticku regresiju i SVM,")
+    print("  ali Random Forest i Gradient Boosting su robustni na korelacije.")
+
+# ====================================================================
 #  4. TRENIRANJE MODELA (sa skaliranjem i recency weighting)
 # ====================================================================
 
@@ -651,6 +720,239 @@ if hasattr(najbolji_model, "feature_importances_"):
     plt.tight_layout()
     plt.savefig(os.path.join(PATH_REZULTATI, "feature_importance_v2.png"), dpi=100)
     plt.close()
+
+# ====================================================================
+#  5.5 PODESAVANJE HIPERPARAMETARA (GridSearchCV)
+# ====================================================================
+
+print("\n" + "=" * 60)
+print("  PODESAVANJE HIPERPARAMETARA (GridSearchCV)")
+print("=" * 60)
+
+from sklearn.model_selection import GridSearchCV
+
+# Logisticka regresija
+print("\n  Logisticka regresija...")
+lr_pipe = Pipeline([("scaler", StandardScaler()), ("clf", LogisticRegression(max_iter=2000))])
+lr_params = {"clf__C": [0.01, 0.1, 1, 10, 100], "clf__penalty": ["l1", "l2"],
+             "clf__solver": ["liblinear"]}
+lr_grid = GridSearchCV(lr_pipe, lr_params, cv=5, scoring="accuracy", n_jobs=-1)
+lr_grid.fit(X_train, y_train)
+print(f"    Najbolji parametri: {lr_grid.best_params_}")
+print(f"    CV accuracy:  {lr_grid.best_score_:.3f}")
+print(f"    Test accuracy: {lr_grid.score(X_test, y_test):.3f}")
+
+# Random Forest
+print("\n  Random Forest...")
+rf_params = {"n_estimators": [100, 200, 300], "max_depth": [5, 8, 10, 15, None],
+             "min_samples_split": [2, 5, 10]}
+rf_grid = GridSearchCV(
+    RandomForestClassifier(random_state=RANDOM_STATE),
+    rf_params, cv=5, scoring="accuracy", n_jobs=-1)
+rf_grid.fit(X_train, y_train, sample_weight=sample_weights)
+print(f"    Najbolji parametri: {rf_grid.best_params_}")
+print(f"    CV accuracy:  {rf_grid.best_score_:.3f}")
+print(f"    Test accuracy: {rf_grid.score(X_test, y_test):.3f}")
+
+# Gradient Boosting
+print("\n  Gradient Boosting...")
+gb_params = {"n_estimators": [100, 200, 300], "max_depth": [3, 4, 5, 6],
+             "learning_rate": [0.01, 0.05, 0.1]}
+gb_grid = GridSearchCV(
+    GradientBoostingClassifier(random_state=RANDOM_STATE),
+    gb_params, cv=5, scoring="accuracy", n_jobs=-1)
+gb_grid.fit(X_train, y_train, sample_weight=sample_weights)
+print(f"    Najbolji parametri: {gb_grid.best_params_}")
+print(f"    CV accuracy:  {gb_grid.best_score_:.3f}")
+print(f"    Test accuracy: {gb_grid.score(X_test, y_test):.3f}")
+
+# SVM
+print("\n  SVM (RBF)...")
+svm_pipe = Pipeline([("scaler", StandardScaler()),
+                      ("clf", SVC(kernel="rbf", probability=True, random_state=RANDOM_STATE))])
+svm_params = {"clf__C": [0.1, 1, 10, 100], "clf__gamma": ["scale", "auto", 0.01, 0.1]}
+svm_grid = GridSearchCV(svm_pipe, svm_params, cv=5, scoring="accuracy", n_jobs=-1)
+svm_grid.fit(X_train, y_train)
+print(f"    Najbolji parametri: {svm_grid.best_params_}")
+print(f"    CV accuracy:  {svm_grid.best_score_:.3f}")
+print(f"    Test accuracy: {svm_grid.score(X_test, y_test):.3f}")
+
+# KNN
+print("\n  KNN...")
+knn_pipe = Pipeline([("scaler", StandardScaler()), ("clf", KNeighborsClassifier())])
+knn_params = {"clf__n_neighbors": [3, 5, 7, 9, 11, 15],
+              "clf__weights": ["uniform", "distance"],
+              "clf__metric": ["euclidean", "manhattan"]}
+knn_grid = GridSearchCV(knn_pipe, knn_params, cv=5, scoring="accuracy", n_jobs=-1)
+knn_grid.fit(X_train, y_train)
+print(f"    Najbolji parametri: {knn_grid.best_params_}")
+print(f"    CV accuracy:  {knn_grid.best_score_:.3f}")
+print(f"    Test accuracy: {knn_grid.score(X_test, y_test):.3f}")
+
+# Sacuvaj tabelu poredjenja: default vs tuned
+print("\n  === POREDENJE: DEFAULT vs TUNED ===")
+tuned_modeli = {
+    "Logisticka regresija": lr_grid,
+    "Random Forest": rf_grid,
+    "Gradient Boosting": gb_grid,
+    "SVM (RBF)": svm_grid,
+    "KNN": knn_grid,
+}
+print(f"  {'Algoritam':25s} {'Default':>10s} {'Tuned':>10s} {'Razlika':>10s}")
+print(f"  {'-'*55}")
+for naziv, grid in tuned_modeli.items():
+    default_acc = rezultati_test.get(naziv, rezultati_test.get("KNN (k=7)", 0))
+    tuned_acc = grid.score(X_test, y_test)
+    diff = tuned_acc - default_acc
+    print(f"  {naziv:25s} {default_acc:10.3f} {tuned_acc:10.3f} {diff:+10.3f}")
+
+# Azuriraj najbolji model ako je tuned bolji
+sve_tuned = {n: g.score(X_test, y_test) for n, g in tuned_modeli.items()}
+best_tuned_naziv = max(sve_tuned, key=sve_tuned.get)
+best_tuned_acc = sve_tuned[best_tuned_naziv]
+
+if best_tuned_acc > rezultati_test[najbolji_naziv]:
+    print(f"\n  Tuned '{best_tuned_naziv}' ({best_tuned_acc:.3f}) je bolji od "
+          f"default '{najbolji_naziv}' ({rezultati_test[najbolji_naziv]:.3f})")
+    najbolji_model = tuned_modeli[best_tuned_naziv].best_estimator_
+    najbolji_naziv = f"{best_tuned_naziv} (tuned)"
+    print(f"  -> Koristim tuned model za predikcije")
+else:
+    print(f"\n  Default '{najbolji_naziv}' je i dalje najbolji ({rezultati_test[najbolji_naziv]:.3f})")
+
+# ====================================================================
+#  5.6 ODABIR NAJZNACAJNIJIH ATRIBUTA
+# ====================================================================
+
+print("\n" + "=" * 60)
+print("  ODABIR NAJZNACAJNIJIH ATRIBUTA")
+print("=" * 60)
+
+from sklearn.feature_selection import SelectKBest, f_classif, RFE
+
+# --- Metoda 1: SelectKBest (statisticki test) ---
+print("\n--- Metoda 1: SelectKBest (ANOVA F-test) ---")
+selector_kb = SelectKBest(f_classif, k="all")
+selector_kb.fit(X_train, y_train)
+
+kb_scores = pd.DataFrame({
+    "feature": features,
+    "f_score": selector_kb.scores_,
+    "p_value": selector_kb.pvalues_
+}).sort_values("f_score", ascending=False)
+
+print("\nRangiranje atributa po F-score:")
+for i, (_, row) in enumerate(kb_scores.iterrows(), 1):
+    zvjezdica = "***" if row["p_value"] < 0.001 else "**" if row["p_value"] < 0.01 else "*" if row["p_value"] < 0.05 else ""
+    print(f"  {i:2d}. {row['feature']:25s}  F={row['f_score']:8.2f}  p={row['p_value']:.4f} {zvjezdica}")
+
+# --- Metoda 2: RFE (Recursive Feature Elimination) sa Logistickom regresijom ---
+print("\n--- Metoda 2: RFE (Recursive Feature Elimination) ---")
+rfe_estimator = Pipeline([("scaler", StandardScaler()),
+                          ("clf", LogisticRegression(max_iter=2000, random_state=RANDOM_STATE))])
+# RFE ne radi direktno sa Pipeline, pa koristimo samo na skaliranim podacima
+scaler_rfe = StandardScaler()
+X_train_scaled = scaler_rfe.fit_transform(X_train)
+X_test_scaled = scaler_rfe.transform(X_test)
+
+rfe = RFE(LogisticRegression(max_iter=2000, random_state=RANDOM_STATE),
+          n_features_to_select=10, step=1)
+rfe.fit(X_train_scaled, y_train)
+
+rfe_selected = [f for f, s in zip(features, rfe.support_) if s]
+rfe_ranking = pd.DataFrame({
+    "feature": features,
+    "rank": rfe.ranking_,
+    "selected": rfe.support_
+}).sort_values("rank")
+
+print("\nRFE ranking (1 = odabran):")
+for _, row in rfe_ranking.iterrows():
+    oznaka = "SELECTED" if row["selected"] else ""
+    print(f"  Rank {int(row['rank']):2d}: {row['feature']:25s} {oznaka}")
+
+# --- Metoda 3: Feature Importance iz Random Forest (tuned) ---
+print("\n--- Metoda 3: Feature Importance (Random Forest, tuned) ---")
+rf_best = rf_grid.best_estimator_
+fi_rf = pd.DataFrame({
+    "feature": features,
+    "importance": rf_best.feature_importances_
+}).sort_values("importance", ascending=False)
+
+print("\nTop 15 atributa po RF importance:")
+for i, (_, row) in enumerate(fi_rf.head(15).iterrows(), 1):
+    bar = "#" * int(row["importance"] * 200)
+    print(f"  {i:2d}. {row['feature']:25s}  {row['importance']:.4f}  {bar}")
+
+# Vizualizacija poredjenja sve 3 metode
+fig, axes = plt.subplots(1, 3, figsize=(18, 8))
+
+# SelectKBest
+ax = axes[0]
+top_kb = kb_scores.head(15)
+ax.barh(top_kb["feature"][::-1], top_kb["f_score"][::-1], color="#2a9d8f")
+ax.set_title("SelectKBest (F-score)", fontsize=11, fontweight="bold")
+ax.set_xlabel("F-score")
+
+# RFE ranking
+ax = axes[1]
+rfe_top = rfe_ranking.head(15)
+boje_rfe = ["#2a9d8f" if s else "#e5e5e5" for s in rfe_top["selected"][::-1]]
+ax.barh(rfe_top["feature"][::-1], [max(features.__len__() - r + 1, 0) for r in rfe_top["rank"][::-1]],
+        color=boje_rfe)
+ax.set_title("RFE (Recursive Feature Elimination)", fontsize=11, fontweight="bold")
+ax.set_xlabel("Inverzni rang")
+
+# RF Importance
+ax = axes[2]
+top_fi = fi_rf.head(15)
+ax.barh(top_fi["feature"][::-1], top_fi["importance"][::-1], color="#457b9d")
+ax.set_title("Random Forest Importance", fontsize=11, fontweight="bold")
+ax.set_xlabel("Importance")
+
+plt.suptitle("Poredenje metoda za odabir atributa", fontsize=14, fontweight="bold", y=1.01)
+plt.tight_layout()
+plt.savefig(os.path.join(PATH_REZULTATI, "feature_selection_poredenje.png"), dpi=120)
+plt.close()
+
+# --- POREDENJE: SVI ATRIBUTI vs TOP 10 ---
+print("\n" + "=" * 60)
+print("  POREDENJE: SVI ATRIBUTI vs TOP 10 (RFE)")
+print("=" * 60)
+
+# Top 10 po RFE
+X_train_top10 = X_train_scaled[:, rfe.support_]
+X_test_top10 = X_test_scaled[:, rfe.support_]
+
+print(f"\n  Svi atributi: {len(features)}")
+print(f"  Top 10 (RFE): {rfe_selected}")
+
+# Treniraj i uporedi
+modeli_za_poredjenje = {
+    "Logisticka regresija": LogisticRegression(max_iter=2000, random_state=RANDOM_STATE),
+    "Random Forest": RandomForestClassifier(
+        **rf_grid.best_params_, random_state=RANDOM_STATE),
+    "Gradient Boosting": GradientBoostingClassifier(
+        **gb_grid.best_params_, random_state=RANDOM_STATE),
+}
+
+print(f"\n  {'Algoritam':25s} {'Svi attr':>10s} {'Top 10':>10s} {'Razlika':>10s}")
+print(f"  {'-'*55}")
+for naziv, model in modeli_za_poredjenje.items():
+    # Svi atributi
+    model.fit(X_train_scaled, y_train)
+    acc_svi = accuracy_score(y_test, model.predict(X_test_scaled))
+
+    # Top 10
+    model_top = type(model)(**model.get_params())
+    model_top.fit(X_train_top10, y_train)
+    acc_top = accuracy_score(y_test, model_top.predict(X_test_top10))
+
+    diff = acc_top - acc_svi
+    print(f"  {naziv:25s} {acc_svi:10.3f} {acc_top:10.3f} {diff:+10.3f}")
+
+print("\n  ZAKLJUCAK: Ako je razlika mala ili pozitivna, znaci da nepotrebni")
+print("  atributi dodaju sum (noise) i model radi jednako ili bolje sa manje.")
 
 # ====================================================================
 #  6. PREDIKCIJA MECEVA - FUNKCIJE
