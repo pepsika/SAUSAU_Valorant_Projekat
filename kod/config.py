@@ -2,8 +2,11 @@
 
 import os
 
-PATH = r"C:\Users\KORISNIK\Desktop\6. semestar\Softverski algoritmi u sistemima automatskog upravljanja\Projekat\dataset"
-PATH_REZULTATI = r"C:\Users\KORISNIK\Desktop\6. semestar\Softverski algoritmi u sistemima automatskog upravljanja\Projekat\rezultati"
+# Putanje su relativne u odnosu na root projekta (parent foldera kod/), tako
+# da pipeline radi bez izmjena bez obzira gdje je repozitorijum kloniran.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PATH = os.path.join(ROOT_DIR, "dataset")
+PATH_REZULTATI = os.path.join(ROOT_DIR, "rezultati")
 PATH_MODEL = os.path.join(PATH_REZULTATI, "model_predictor.joblib")
 
 GODINE = ["vct_2021", "vct_2022", "vct_2023", "vct_2024", "vct_2025", "vct_2026"]
