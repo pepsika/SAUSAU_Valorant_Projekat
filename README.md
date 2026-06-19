@@ -4,10 +4,9 @@ Projekat iz predmeta Softverski algoritmi u sistemima automatskog upravljanja
 Projekat "Анализа мете и предвиђање мечева на Valorant е-спорт турнирима." 
 Mateja Stojišić RA180/2023
 
-Ovaj repozitorijum sadrži dva dokumenta i tri foldera:
+Ovaj repozitorijum sadrži dva dokumenta i dva foldera:
   - Dokumentacija_projekta.docx: Za pročitati dokle je postignuto sa projektom samim
   - Specifikacije projekta.docx: Unaprijed definisane specifikacije projekta (cilj)
-  - folder dataset: Sadrži kompletan dataset korišten za treniranje i testiranje ML modela
   - folder kod: Pipeline za predikciju mečeva (treniranje + simulacija Masters London 2026) i analizu mete agenata, plus UI za korišćenje istreniranog modela
   - folder rezultati: Svi grafovi i istrenirani model (model_predictor.joblib) su smješteni ovdje
 
@@ -44,3 +43,4 @@ python kod/agenti.py
 streamlit run kod/app.py
 ```
 
+NAPOMENA: Folder dataset ne može biti ubačen u repozitorijum zbog svoje veličine (vidi `requirements.txt` i `kod/config.py` za putanju gdje se dataset očekuje lokalno).
