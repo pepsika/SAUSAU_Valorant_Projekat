@@ -22,6 +22,8 @@ jer se predict_proba direktno koristi u Monte Carlo simulaciji (kod[7]).
 import os
 
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")  # neinteraktivni backend - skripta samo cuva fajlove (savefig), bez prozora
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -218,6 +220,11 @@ def tune_hyperparameters(X_train, y_train, X_test, y_test, sample_weights, rezul
     za sve modele koji ih podrzavaju, ukljucujuci LR i SVM (Pipeline -> potreban
     je "clf__" prefiks; ranije je ovo bilo izostavljeno za ta dva modela, pa su
     tuned LR/SVM ignorisali recency weighting iako ga je default verzija postovala).
+
+    Finalni model (najbolji_model/najbolji_naziv) se takodje bira po Brier score-u,
+    ne accuracy-ju - accuracy tabela se i dalje ispisuje radi transparentnosti, ali
+    odluka prati istu logiku kao tuning: model_predictor.joblib ide direktno u
+    Monte Carlo simulaciju preko predict_proba(), pa kalibracija odlucuje.
     """
     print("\n" + "=" * 60)
     print("  PODESAVANJE HIPERPARAMETARA (GridSearchCV, walk-forward, scoring=neg_brier_score)")
@@ -300,24 +307,31 @@ def tune_hyperparameters(X_train, y_train, X_test, y_test, sample_weights, rezul
     print("\n  === KALIBRACIJA TUNED MODELA NA TEST SETU (ROC-AUC / Brier) ===")
     print(f"  {'Algoritam':25s} {'ROC-AUC':>10s} {'Brier':>10s}")
     print(f"  {'-' * 47}")
+    tuned_brier = {}
     for naziv, grid in tuned_modeli.items():
         proba = grid.predict_proba(X_test)[:, 1]
         auc = roc_auc_score(y_test, proba)
         brier = brier_score_loss(y_test, proba)
+        tuned_brier[naziv] = brier
         print(f"  {naziv:25s} {auc:10.3f} {brier:10.3f}")
 
-    sve_tuned = {n: _test_accuracy(g, X_test, y_test) for n, g in tuned_modeli.items()}
-    best_tuned_naziv = max(sve_tuned, key=sve_tuned.get)
-    best_tuned_acc = sve_tuned[best_tuned_naziv]
+    # Finalni model se bira po KALIBRACIJI (Brier), ne po accuracy-ju - konzistentno
+    # sa scoring="neg_brier_score" iz GridSearchCV-a iznad, i sa stvarnom upotrebom
+    # (predict_proba se direktno koristi u Monte Carlo simulaciji u main.py).
+    proba_default = najbolji_model.predict_proba(X_test)[:, 1]
+    default_brier = brier_score_loss(y_test, proba_default)
 
-    if best_tuned_acc > rezultati_test[najbolji_naziv]:
-        print(f"\n  Tuned '{best_tuned_naziv}' ({best_tuned_acc:.3f}) je bolji od "
-              f"default '{najbolji_naziv}' ({rezultati_test[najbolji_naziv]:.3f})")
+    best_tuned_naziv = min(tuned_brier, key=tuned_brier.get)
+    best_tuned_brier = tuned_brier[best_tuned_naziv]
+
+    if best_tuned_brier < default_brier:
+        print(f"\n  Tuned '{best_tuned_naziv}' (Brier={best_tuned_brier:.3f}) bolje kalibrisan od "
+              f"default '{najbolji_naziv}' (Brier={default_brier:.3f})")
         najbolji_model = tuned_modeli[best_tuned_naziv].best_estimator_
         najbolji_naziv = f"{best_tuned_naziv} (tuned)"
-        print("  -> Koristim tuned model za predikcije")
+        print("  -> Koristim tuned model za predikcije (kriterijum: kalibracija)")
     else:
-        print(f"\n  Default '{najbolji_naziv}' je i dalje najbolji ({rezultati_test[najbolji_naziv]:.3f})")
+        print(f"\n  Default '{najbolji_naziv}' (Brier={default_brier:.3f}) je i dalje bolje kalibrisan")
 
     return {
         "tuned_modeli": tuned_modeli,

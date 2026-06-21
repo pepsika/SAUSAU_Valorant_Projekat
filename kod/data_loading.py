@@ -7,14 +7,53 @@ import pandas as pd
 from config import ALIAS_MAPPING, GODINE, PATH
 
 
-def kanonizuj_imena(df, kolone=None):
+def kanonizuj_imena(df, kolone=None, mapping=None):
     """Zamijeni alias imena u zadatim kolonama."""
     if kolone is None:
         kolone = ["Team A", "Team B", "Team", "Teams"]
+    if mapping is None:
+        mapping = ALIAS_MAPPING
     for kol in kolone:
         if kol in df.columns:
-            df[kol] = df[kol].replace(ALIAS_MAPPING)
+            df[kol] = df[kol].replace(mapping)
     return df
+
+
+def izgradi_case_insensitive_mapping(*serije_imena):
+    """Detektuje imena timova koja se razlikuju SAMO po velicini slova
+    (npr. "Aqua" / "aqua", "ENVY" / "Envy") i mapira rjedje koriscenu
+    varijantu na najcesce koriscenu (mjereno preko svih datih serija).
+
+    Pokrece se NAKON rucnog ALIAS_MAPPING-a (na vec djelimicno kanonizovanim
+    imenima) da uhvati preostale duplikate koje rucna lista ne pokriva -
+    bez ovoga isti tim ima razdvojene/razvodnjene statistike pod dva imena,
+    isti problem kao NRG/Mega Minors prije rucne kanonizacije.
+
+    VAZNO: izvor mora biti UNIJA imena timova iz svih ucitanih fajlova, ne
+    samo df_pro - razlike u velicini slova najcesce dolaze iz RAZLICITIH
+    CSV-ova (overview/maps_scores/players su odvojeni scraping izvori od
+    glavnog dataset_sa_featurima.csv), pa df_pro sam po sebi ne sadrzi vecinu
+    duplikata.
+    """
+    imena = pd.concat(serije_imena).dropna()
+    brojanje = imena.value_counts()
+
+    grupe = {}
+    for ime in brojanje.index:
+        grupe.setdefault(ime.lower(), []).append(ime)
+
+    mapping = {}
+    for varijante in grupe.values():
+        if len(varijante) > 1:
+            kanonsko = max(varijante, key=lambda v: brojanje[v])
+            for v in varijante:
+                if v != kanonsko:
+                    mapping[v] = kanonsko
+    return mapping
+
+
+def _kolona_ili_prazno(df, kol):
+    return df[kol] if kol in df.columns else pd.Series(dtype=object)
 
 
 def ucitaj_csv_po_godinama(relativna_putanja, naziv=""):
@@ -90,6 +129,27 @@ def load_all_data():
         df_stage1_mecevi["team_a"] = df_stage1_mecevi["team_a"].replace(ALIAS_MAPPING)
         df_stage1_mecevi["team_b"] = df_stage1_mecevi["team_b"].replace(ALIAS_MAPPING)
         df_stage1_mecevi["winner"] = df_stage1_mecevi["winner"].replace(ALIAS_MAPPING)
+
+    # Case-insensitive duplikati (npr. "Aqua"/"aqua") - detektuju se POSLIJE
+    # rucnog aliasa, na vec djelimicno kanonizovanim imenima. Izvor je UNIJA
+    # imena iz svih fajlova (ne samo df_pro) - vidi docstring funkcije.
+    case_mapping = izgradi_case_insensitive_mapping(
+        df_pro["Team A"], df_pro["Team B"],
+        _kolona_ili_prazno(df_eco, "Team"),
+        _kolona_ili_prazno(df_overview, "Team"),
+        _kolona_ili_prazno(df_players, "Teams"),
+        _kolona_ili_prazno(df_maps_scores, "Team A"),
+        _kolona_ili_prazno(df_maps_scores, "Team B"),
+        _kolona_ili_prazno(df_teams_agents, "Team"),
+    )
+    print(f"  Case-insensitive aliasi detektovani: {len(case_mapping)}")
+    for df_x in [df_pro, df_eco, df_overview, df_players, df_maps_scores, df_teams_agents]:
+        kanonizuj_imena(df_x, mapping=case_mapping)
+    df_stage1["team"] = df_stage1["team"].replace(case_mapping)
+    if not df_stage1_mecevi.empty:
+        df_stage1_mecevi["team_a"] = df_stage1_mecevi["team_a"].replace(case_mapping)
+        df_stage1_mecevi["team_b"] = df_stage1_mecevi["team_b"].replace(case_mapping)
+        df_stage1_mecevi["winner"] = df_stage1_mecevi["winner"].replace(case_mapping)
 
     provj = df_pro[((df_pro["Team A"] == "NRG") | (df_pro["Team B"] == "NRG")) &
                    (df_pro["Tournament"].str.contains("Champions 2025|Santiago 2026|Toronto 2025", na=False))]

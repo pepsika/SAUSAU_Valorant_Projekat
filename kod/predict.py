@@ -7,6 +7,8 @@ ucitavanja cijelog dataseta - to je artefakt za 'Deployment modela' fazu.
 
 import numpy as np
 
+from config import MIN_MECEVA_ZA_PRIKAZ
+
 
 class MatchPredictor:
     def __init__(self, model, model_name, features, team_features, df_pro, alias_mapping):
@@ -28,8 +30,21 @@ class MatchPredictor:
 
         self.known_teams = sorted(team_features["Team"].dropna().unique().tolist())
 
-    def list_teams(self):
-        return list(self.known_teams)
+    def list_teams(self, min_mecevi=MIN_MECEVA_ZA_PRIKAZ):
+        """Vraca poznate timove sa bar `min_mecevi` odigranih meceva.
+
+        Dataset sadrzi hiljade "timova" od kojih je vecina sum (amaterski/
+        jednokratni timovi sa par meceva) - default prag filtrira to za UI,
+        ali ostali metodi (dohvati_team_features, predikcija) i dalje rade
+        za bilo koji tim u datasetu, filtrirano ili ne.
+        """
+        return [t for t in self.known_teams
+                if self.broj_meceva(t) >= min_mecevi]
+
+    def broj_meceva(self, tim_naziv):
+        """Broj odigranih meceva za tim - indikator pouzdanosti predikcije."""
+        feat = self.dohvati_team_features(tim_naziv)
+        return feat.get("dynamic_mecevi", 0)
 
     def normalizuj_ime(self, tim):
         # Kanonizacija je vec uradjena na treningu - ovo je backup za stare aliase

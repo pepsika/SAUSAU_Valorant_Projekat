@@ -73,3 +73,10 @@ STVARNI_R1_PAROVI = [
     ("FULL SENSE", "FUT Esports"),
     ("LEVIATÁN", "Global Esports"),
 ]
+
+# Minimalan broj odigranih meceva da bi se tim prikazao u UI dropdown listi.
+# Dataset sadrzi ~4200 "timova", od kojih je ogromna vecina sum (amaterski/
+# jednokratni timovi sa par meceva, npr. "01234", "zyzz" - medijan je SVEGA
+# 6 odigranih meceva po timu). Prag 30 ostavlja ~86 timova i svi su
+# prepoznatljivi pravi VCT timovi (provjereno rucno).
+MIN_MECEVA_ZA_PRIKAZ = 30

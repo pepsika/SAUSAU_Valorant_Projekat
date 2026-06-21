@@ -5,6 +5,8 @@
 import os
 import random
 
+import matplotlib
+matplotlib.use("Agg")  # neinteraktivni backend - skripta samo cuva fajlove (savefig), bez prozora
 import matplotlib.pyplot as plt
 
 from config import PATH_REZULTATI

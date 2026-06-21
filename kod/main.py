@@ -60,10 +60,8 @@ def main():
     # 5. Treniranje modela
     rez = train_models(ds["X_train"], ds["y_train"], ds["X_test"], ds["y_test"], ds["sample_weights"])
 
-    # 6. Cross validacija + vizualizacije
+    # 6. Cross validacija
     cross_validate_models(rez["modeli"], ds["X_train"], ds["y_train"])
-    plot_confusion_matrix(rez["najbolji_model"], rez["najbolji_naziv"], ds["X_test"], ds["y_test"])
-    plot_feature_importance(rez["najbolji_model"], rez["najbolji_naziv"], ds["features"])
 
     # 7. Hiperparametri
     tuning = tune_hyperparameters(
@@ -71,6 +69,12 @@ def main():
         rez["rezultati_test"], rez["najbolji_model"], rez["najbolji_naziv"])
     najbolji_model = tuning["najbolji_model"]
     najbolji_naziv = tuning["najbolji_naziv"]
+
+    # Vizualizacije FINALNOG modela (nakon tuning-a, ne defaultnog) - inace
+    # confusion matrix/feature importance prikazuju pogresan model u odnosu
+    # na onaj koji se stvarno exportuje i koristi u app.py/simulaciji
+    plot_confusion_matrix(najbolji_model, najbolji_naziv, ds["X_test"], ds["y_test"])
+    plot_feature_importance(najbolji_model, najbolji_naziv, ds["features"])
 
     # 8. Odabir najznacajnijih atributa
     run_feature_selection(

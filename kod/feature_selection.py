@@ -4,6 +4,8 @@ te poredjenje performansi sa svim atributima naspram top 10."""
 import os
 
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")  # neinteraktivni backend - skripta samo cuva fajlove (savefig), bez prozora
 import matplotlib.pyplot as plt
 
 from sklearn.feature_selection import SelectKBest, f_classif, RFE
