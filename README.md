@@ -68,3 +68,11 @@ python kod/agenti.py
 # 3. UI za predikciju mečeva (zahtijeva da je main.py već jednom pokrenut)
 streamlit run kod/app.py
 ```
+
+**Windows/PowerShell napomena:** ako `streamlit run kod/app.py` baci
+`CommandNotFoundException` ("streamlit nije prepoznat..."), to znači da
+`pip` nije dodao Scripts folder u PATH. Zaobiđi to pozivanjem kroz `python -m`:
+
+```powershell
+python -m streamlit run kod/app.py
+```
